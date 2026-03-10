@@ -1,6 +1,7 @@
 require('dotenv').config()
 const express = require('express')
 const cors    = require('cors')
+const path    = require('path')
 const { posDB, crmDB } = require('./db')
 
 const app  = express()
@@ -23,6 +24,10 @@ app.use('/api/employees',      require('./routes/employees'))      // Auth requi
 app.use('/api/activities',     require('./routes/activities'))     // Auth required
 app.use('/api/notifications',  require('./routes/notifications'))  // Auth required
 app.use('/api/notes',          require('./routes/notes'))          // Auth required
+app.use('/api/activities/:id/attachments', require('./routes/attachments'))
+
+// Static: serve uploaded files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 
 // ── Health check ────────────────────────
 app.get('/api/health', async (req, res) => {

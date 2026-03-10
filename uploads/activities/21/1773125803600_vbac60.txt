@@ -1,0 +1,204 @@
+with sum_credit as ( 
+                 select  
+                   code,  
+                   name_1, 
+                   coalesce((select credit_money  
+                             from ar_customer_detail  
+                             where ar_customer_detail.ar_code = ar_customer.code), 0) as credit_money, 
+                              
+                   coalesce((select credit_money_max 
+                             from ar_customer_detail  
+                             where ar_customer_detail.ar_code = ar_customer.code), 0) as credit_money_max, 
+                              
+                   coalesce((select credit_status  
+                             from ar_customer_detail  
+                             where ar_customer_detail.ar_code = ar_customer.code), 0) as credit_status, 
+                  
+                   (select coalesce(sum(amount),0)  
+                    from ( 
+                       select roworder,1 as calc_type,doc_no,cust_code,total_amount as amount  
+                       from ic_trans  
+                       where last_status=0   
+                         and ((trans_flag=418 or trans_flag=44 or trans_flag=250 ) and inquiry_type in (0, 2))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all  
+                        
+                       select roworder,1,doc_no,cust_code,total_amount  
+                       from ic_trans  
+                       where last_status=0   
+                         and (trans_flag in (93,99))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all  
+                        
+                       select roworder,2,doc_no,cust_code,total_amount  
+                       from ic_trans  
+                       where last_status=0  
+                         and (trans_flag in (46,95,101))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all  
+                        
+                       select roworder,3,doc_no,cust_code,-1*total_amount  
+                       from ic_trans  
+                       where last_status=0   
+                         and (trans_flag=48 and inquiry_type in (0,2,4))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all  
+                        
+                       select roworder,3,doc_no,cust_code,-1*total_amount  
+                       from ic_trans  
+                       where last_status=0   
+                         and (trans_flag in (97,103,252))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all 
+                        
+                       select roworder,4,doc_no,cust_code,-1*total_net_value  
+                       from ap_ar_trans  
+                       where last_status = 0  
+                         and trans_flag =239  
+                         and ar_customer.code = ap_ar_trans.cust_code 
+                    ) as temp6   
+                   ) as balance_end, 
+                  
+                   0 as chq_outstanding, 
+                  
+                   coalesce((select sum(total_amount - coalesce((select sum(sum_amount)  
+                             from ic_trans_detail as x  
+                             where x.trans_flag in (44, 39, 36)  
+                               and x.last_status = 0  
+                               and x.ref_doc_no = ic_trans.doc_no),0))  
+                             from ic_trans  
+                             where trans_flag = 34  
+                               and last_status = 0  
+                               and inquiry_type in (0,2)  
+                               and doc_success = 0  
+                               and approve_status in (0,1)  
+                               and ic_trans.cust_code = ar_customer.code ), 0) as sr_remain, 
+                  
+                   coalesce((select sum(total_amount - coalesce((select sum(sum_amount)  
+                             from ic_trans_detail as x  
+                             where x.trans_flag in (44, 37)  
+                               and x.last_status = 0  
+                               and x.ref_doc_no = ic_trans.doc_no),0))  
+                             from ic_trans  
+                             where trans_flag = 36  
+                               and last_status = 0  
+                               and inquiry_type in (0,2)  
+                               and doc_success = 0  
+                               and approve_status in (0,1)  
+                               and ic_trans.cust_code = ar_customer.code ), 0) as ss_remain, 
+                  
+                   coalesce((select sum(case when _def_last_status = 1 then 0 else total_amount-(deposit_buy2+sum_used) end)  
+                             from( 
+                               select cust_code,  
+                                 coalesce((select sum(total_amount)  
+                                           from ic_trans as x1  
+                                           where x1.last_status = 0  
+                                             and x1.doc_ref = deposit.doc_no), 0) as deposit_buy2, 
+                                 coalesce((select sum(amount)  
+                                           from cb_trans_detail as x2  
+                                           where x2.last_status = 0  
+                                             and x2.trans_number = deposit.doc_no),0) as sum_used, 
+                                 total_amount,last_status as _def_last_status  
+                               from ic_trans as deposit  
+                               where deposit.trans_flag in (40)  
+                                 and deposit.cust_code = ar_customer.code 
+                             ) as temp1 ), 0) as advance_amount,  
+                   (coalesce((select credit_money  
+                              from ar_customer_detail  
+                              where ar_customer_detail.ar_code = ar_customer.code), 0) 
+                    - 
+                    ((select coalesce(sum(amount),0)  
+                    from ( 
+                       select roworder,1 as calc_type,doc_no,cust_code,total_amount as amount  
+                       from ic_trans  
+                       where last_status=0   
+                         and ((trans_flag=418 or trans_flag=44 or trans_flag=250 ) and inquiry_type in (0, 2))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all  
+                        
+                       select roworder,1,doc_no,cust_code,total_amount  
+                       from ic_trans  
+                       where last_status=0   
+                         and (trans_flag in (93,99))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all  
+                        
+                       select roworder,2,doc_no,cust_code,total_amount  
+                       from ic_trans  
+                       where last_status=0  
+                         and (trans_flag in (46,95,101))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all  
+                        
+                       select roworder,3,doc_no,cust_code,-1*total_amount  
+                       from ic_trans  
+                       where last_status=0   
+                         and (trans_flag=48 and inquiry_type in (0,2,4))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all  
+                        
+                       select roworder,3,doc_no,cust_code,-1*total_amount  
+                       from ic_trans  
+                       where last_status=0   
+                         and (trans_flag in (97,103,252))   
+                         and ar_customer.code = ic_trans.cust_code 
+                          
+                       union all 
+                        
+                       select roworder,4,doc_no,cust_code,-1*total_net_value  
+                       from ap_ar_trans  
+                       where last_status = 0  
+                         and trans_flag =239  
+                         and ar_customer.code = ap_ar_trans.cust_code 
+                    ) as temp6   
+                   ) 
+                     + 
+                     coalesce((select sum(total_amount - coalesce((select sum(sum_amount)  
+                                from ic_trans_detail as x  
+                                where x.trans_flag in (44, 37)  
+                                  and x.last_status = 0  
+                                  and x.ref_doc_no = ic_trans.doc_no),0))  
+                              from ic_trans  
+                              where trans_flag = 36  
+                                and last_status = 0  
+                                and inquiry_type in (0,2)  
+                                and doc_success = 0  
+                                and approve_status in (0,1)  
+                                and ic_trans.cust_code = ar_customer.code ), 0) 
+                   )) as credit_available 
+                  
+                 from ar_customer 
+                 ), 
+                 cus_cradit as ( select code, name_1,   
+                 coalesce((select credit_money from ar_customer_detail where ar_customer_detail.ar_code=ar_customer.code), 0) as credit_money,   
+                 coalesce((select credit_money_max from ar_customer_detail where ar_customer_detail.ar_code=ar_customer.code), 0) as credit_money_max,   
+                 coalesce((select credit_status from ar_customer_detail where ar_customer_detail.ar_code=ar_customer.code), 0) as credit_status,   
+                 (select coalesce(sum(amount),0) from (select roworder,1 as calc_type,doc_no,cust_code,total_amount as amount  from ic_trans  where last_status=0 and ((trans_flag=418 or trans_flag=44 or trans_flag=250 ) and inquiry_type in (0, 2) )  and ar_customer.code=ic_trans.cust_code   
+                 union all select roworder,1 as calc_type,doc_no,cust_code,total_amount as amount from ic_trans where last_status=0 and (trans_flag in (93,99))  and ar_customer.code=ic_trans.cust_code   
+                 union all select roworder,2 as calc_type,doc_no,cust_code,total_amount as amount from ic_trans where last_status=0 and (trans_flag in (46,95,101))  and ar_customer.code=ic_trans.cust_code   
+                 union all select roworder,3 as calc_type,doc_no,cust_code,-1*total_amount as amount from ic_trans where last_status=0 and (trans_flag=48 and inquiry_type in (0,2,4) )  and ar_customer.code=ic_trans.cust_code   
+                 union all select roworder,3 as calc_type,doc_no,cust_code,-1*total_amount as amount from ic_trans where last_status=0 and (trans_flag in (97,103,252))  and ar_customer.code=ic_trans.cust_code  
+                 union all select roworder,4 as calc_type,doc_no,cust_code,-1*total_net_value as amount from ap_ar_trans where last_status = 0 and trans_flag =239  and ar_customer.code=ap_ar_trans.cust_code ) as temp6 ) as balance_end, 0 as chq_outstanding , 0 as sr_remain , 0 as ss_remain ,  0 as advance_amount , 
+                 coalesce((select close_reason from ar_customer_detail where ar_customer_detail.ar_code=ar_customer.code), '') as close_reason  
+                 from ar_customer  where coalesce((select credit_money from ar_customer_detail where ar_customer_detail.ar_code=ar_customer.code), 0) > 0 )   
+                 select doc_date,doc_no,cust_code,approve_status,(select name_1 from ar_customer where code=cust_code) as cust_name,  
+                 coalesce((select name_1 from ar_dimension where (select dimension_1 from ar_customer_detail where ar_code=cust_code)=code),'') as cus_dimension,  
+                 coalesce((select remark from ar_customer where code = cust_code),'') as cus_remark, 
+                 total_amount,  coalesce((select credit_money from ar_customer_detail where ar_customer_detail.ar_code=cust_code), 0) as credit_money,  
+                 coalesce((select credit_money_max from ar_customer_detail where ar_customer_detail.ar_code=cust_code), 0) as credit_money_max,  
+                 coalesce((select balance_end from cus_cradit where cus_cradit.code=ic_trans.cust_code), 0) as balance_end,  
+                 CASE   WHEN approve_status=0 THEN 'รออนุมัติ'   WHEN approve_status=1 THEN 'อนุมัติ'  END AS inquiry_type, 
+                 (select balance_end from sum_credit where cust_code=code) as cus_balance_end, 
+                 (select ss_remain from sum_credit where cust_code=code) as ss_remain, 
+                 (select credit_available from sum_credit where cust_code=code) as credit_available 
+                 from ic_trans    
+                 where  trans_flag=36 and approve_status = 0 and used_status = 0 and last_status = 0 order by doc_date desc
