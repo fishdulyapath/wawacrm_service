@@ -25,6 +25,11 @@ const crmDB = new Pool({
   connectionTimeoutMillis: 5000
 })
 
+// ตั้ง timezone GMT+7 ทุก connection
+crmDB.on('connect', client => {
+  client.query("SET timezone = 'Asia/Bangkok'")
+})
+
 posDB.on('error', (err) => console.error('[POS DB] Unexpected error:', err))
 crmDB.on('error', (err) => console.error('[CRM DB] Unexpected error:', err))
 
