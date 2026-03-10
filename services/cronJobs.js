@@ -1,7 +1,7 @@
 const cron = require('node-cron')
 const { crmDB } = require('../db')
 const lineService = require('./lineService')
-const { notify } = require('./notifyService')
+const { notify, notifyMany } = require('./notifyService')
 
 /**
  * เริ่ม Cron Jobs ทั้งหมดของระบบ LINE
@@ -38,21 +38,23 @@ function start() {
   })
 
   // ── 2. Task Overdue Alert: ทุก 8:00 น. ──
+  // ใช้ crm_activity_owners เพื่อแจ้งทุก owner ที่ยังไม่ได้ปิดงาน
   cron.schedule('0 8 * * *', async () => {
     try {
       const result = await crmDB.query(`
         SELECT a.id, a.subject, a.due_date, a.priority, a.ar_code,
-               u.id AS user_id, u.line_user_id, u.line_notify_enabled
+               u.id AS user_id, u.line_user_id, u.line_notify_enabled,
+               ao.status AS owner_status
         FROM crm_activities a
-        JOIN crm_users u ON u.id = a.owner_id
+        JOIN crm_activity_owners ao ON ao.activity_id = a.id AND ao.removed_at IS NULL
+        JOIN crm_users u ON u.id = ao.user_id
         WHERE a.activity_type = 'task'
-          AND a.status NOT IN ('done','cancelled')
+          AND ao.status NOT IN ('done','cancelled')
           AND a.due_date < CURRENT_DATE
           AND u.is_active = TRUE
       `)
 
       for (const task of result.rows) {
-        // insert crm_notifications (ทุก user ที่มีงาน overdue)
         const daysDiff = Math.floor((Date.now() - new Date(task.due_date).getTime()) / 86400000)
         await notify({
           userId: task.user_id,
@@ -64,20 +66,20 @@ function start() {
           arCode: task.ar_code,
         })
 
-        // LINE push (เฉพาะที่เปิด notify และมี line_user_id)
         if (task.line_user_id && task.line_notify_enabled) {
           await lineService.sendTaskReminder(task.line_user_id, task.user_id, task)
             .catch(e => console.error(`[Cron Overdue] task ${task.id}`, e.message))
         }
       }
 
-      console.log(`[Cron Overdue] แจ้งเตือน ${result.rows.length} task`)
+      console.log(`[Cron Overdue] แจ้งเตือน ${result.rows.length} owner-task`)
     } catch (err) {
       console.error('[Cron Overdue Error]', err.message)
     }
   })
 
   // ── 3. Task Due Tomorrow: ทุก 17:00 น. ──
+  // ใช้ crm_activity_owners เพื่อแจ้งทุก owner ที่ยังไม่ได้ปิดงาน
   cron.schedule('0 17 * * *', async () => {
     try {
       const tomorrow = new Date()
@@ -88,15 +90,15 @@ function start() {
         SELECT a.id, a.subject, a.due_date, a.priority, a.ar_code,
                u.id AS user_id, u.line_user_id, u.line_notify_enabled
         FROM crm_activities a
-        JOIN crm_users u ON u.id = a.owner_id
+        JOIN crm_activity_owners ao ON ao.activity_id = a.id AND ao.removed_at IS NULL
+        JOIN crm_users u ON u.id = ao.user_id
         WHERE a.activity_type = 'task'
-          AND a.status NOT IN ('done','cancelled')
+          AND ao.status NOT IN ('done','cancelled')
           AND a.due_date = $1
           AND u.is_active = TRUE
       `, [tomorrowDate])
 
       for (const task of result.rows) {
-        // insert crm_notifications
         await notify({
           userId: task.user_id,
           notiType: 'task_due',
@@ -107,32 +109,33 @@ function start() {
           arCode: task.ar_code,
         })
 
-        // LINE push (เฉพาะที่เปิด notify)
         if (task.line_user_id && task.line_notify_enabled) {
           await lineService.sendTaskReminder(task.line_user_id, task.user_id, task)
             .catch(e => console.error(`[Cron DueTomorrow] task ${task.id}`, e.message))
         }
       }
 
-      console.log(`[Cron DueTomorrow] แจ้งเตือน ${result.rows.length} task`)
+      console.log(`[Cron DueTomorrow] แจ้งเตือน ${result.rows.length} owner-task`)
     } catch (err) {
       console.error('[Cron DueTomorrow Error]', err.message)
     }
   })
 
   // ── 4. Meeting Reminder: ทุก 15 นาที ──
+  // ใช้ crm_activity_owners เพื่อแจ้งทุก owner/participant ที่ยังไม่ได้ปิด
   cron.schedule('*/15 * * * *', async () => {
     try {
       const now = new Date()
       const in30min = new Date(now.getTime() + 30 * 60 * 1000)
 
       const result = await crmDB.query(`
-        SELECT a.id, a.subject, a.start_datetime, a.location, a.ar_code,
+        SELECT a.id, a.subject, a.start_datetime, a.location, a.meeting_url, a.ar_code,
                u.id AS user_id, u.line_user_id, u.name AS user_name, u.line_notify_enabled
         FROM crm_activities a
-        JOIN crm_users u ON u.id = a.owner_id
+        JOIN crm_activity_owners ao ON ao.activity_id = a.id AND ao.removed_at IS NULL
+        JOIN crm_users u ON u.id = ao.user_id
         WHERE a.activity_type = 'meeting'
-          AND a.status NOT IN ('done','cancelled')
+          AND ao.status NOT IN ('done','cancelled')
           AND a.start_datetime BETWEEN $1 AND $2
           AND u.is_active = TRUE
       `, [now, in30min])
@@ -140,7 +143,6 @@ function start() {
       for (const meeting of result.rows) {
         const startText = new Date(meeting.start_datetime).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
 
-        // insert crm_notifications
         await notify({
           userId: meeting.user_id,
           notiType: 'meeting_remind',
@@ -151,17 +153,23 @@ function start() {
           arCode: meeting.ar_code,
         })
 
-        // LINE push (เฉพาะที่เปิด notify)
         if (meeting.line_user_id && meeting.line_notify_enabled) {
+          const locationLine = meeting.meeting_url
+            ? `🔗 ${meeting.meeting_url}`
+            : meeting.location ? `📍 ${meeting.location}` : ''
           await lineService.sendMessage(meeting.line_user_id, [{
             type: 'text',
             text: `📅 แจ้งเตือน Meeting!\n` +
                   `"${meeting.subject}"\n` +
                   `⏰ เริ่ม: ${startText} น.\n` +
-                  `${meeting.location ? '📍 ' + meeting.location : ''}\n\n` +
+                  `${locationLine}\n\n` +
                   `อีกประมาณ 30 นาที`
           }]).catch(() => {})
         }
+      }
+
+      if (result.rows.length > 0) {
+        console.log(`[Cron Meeting] แจ้งเตือน ${result.rows.length} owner-meeting`)
       }
     } catch (err) {
       console.error('[Cron Meeting Error]', err.message)

@@ -65,4 +65,38 @@ router.post('/sync', async (req, res) => {
   }
 })
 
+// PATCH /api/employees/crm-users/:id/role — เปลี่ยน role ของ user
+// เข้าถึงได้เฉพาะ admin / superadmin
+const { authMiddleware } = require('../middleware/auth')
+router.patch('/crm-users/:id/role', authMiddleware, async (req, res) => {
+  const callerCode = req.user.code?.toUpperCase()
+  const callerRole = req.user.role
+  const isSuperAdmin = callerCode === 'SUPERADMIN'
+  if (!isSuperAdmin && callerRole !== 'admin') {
+    return res.status(403).json({ error: 'ไม่มีสิทธิ์เปลี่ยนสิทธิ์ผู้ใช้งาน' })
+  }
+
+  const { role } = req.body
+  const allowed = ['sales_rep', 'supervisor', 'manager', 'admin']
+  if (!allowed.includes(role)) {
+    return res.status(400).json({ error: `role ไม่ถูกต้อง (${allowed.join(', ')})` })
+  }
+
+  // ป้องกันแก้ตัวเอง
+  if (req.params.id == req.user.id) {
+    return res.status(400).json({ error: 'ไม่สามารถเปลี่ยนสิทธิ์ตัวเองได้' })
+  }
+
+  try {
+    const result = await crmDB.query(
+      `UPDATE crm_users SET role = $1 WHERE id = $2 RETURNING id, code, name, role`,
+      [role, req.params.id]
+    )
+    if (!result.rows.length) return res.status(404).json({ error: 'ไม่พบผู้ใช้งาน' })
+    res.json(result.rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router

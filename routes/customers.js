@@ -109,7 +109,28 @@ router.get('/', async (req, res) => {
       crmResult.rows.forEach(r => { crmMap[r.ar_code] = r })
     }
 
-    const data = posResult.rows.map(c => ({ ...c, crm: crmMap[c.code] || null }))
+    // ── Fallback: ลูกค้าที่ไม่มี crm owner ให้ดึงจาก sale_code ──
+    const noOwnerSaleCodes = posResult.rows
+      .filter(c => !crmMap[c.code]?.owner_user_id && c.sale_code)
+      .map(c => c.sale_code)
+    const uniqueSaleCodes = [...new Set(noOwnerSaleCodes)]
+    const saleUserMap = {}
+    if (uniqueSaleCodes.length > 0) {
+      const saleUsers = await crmDB.query(
+        `SELECT id, code, name FROM crm_users WHERE code = ANY($1) AND is_active = TRUE`,
+        [uniqueSaleCodes]
+      )
+      saleUsers.rows.forEach(u => { saleUserMap[u.code] = u })
+    }
+
+    const data = posResult.rows.map(c => {
+      let crm = crmMap[c.code] || null
+      if (crm && !crm.owner_user_id && c.sale_code && saleUserMap[c.sale_code]) {
+        const su = saleUserMap[c.sale_code]
+        crm = { ...crm, owner_user_id: su.id, owner_code: su.code, owner_name: su.name, owner_from_sale_code: true }
+      }
+      return { ...c, crm }
+    })
 
     res.json({ data, total, page: parseInt(page), limit: parseInt(limit) })
   } catch (err) {
@@ -167,12 +188,28 @@ router.get('/:code', async (req, res) => {
       WHERE p.ar_code = $1
     `, [code])
 
+    let crm = crmResult.rows[0] || null
+
+    // ── Fallback: ถ้าไม่มี crm owner ให้ดึงจาก sale_code ใน POS ──
+    if (crm && !crm.owner_user_id) {
+      const saleCode = detailResult.rows[0]?.sale_code || cusResult.rows[0]?.sale_code
+      if (saleCode) {
+        const fallback = await crmDB.query(
+          `SELECT id, code, name FROM crm_users WHERE code = $1 AND is_active = TRUE LIMIT 1`,
+          [saleCode]
+        )
+        if (fallback.rows.length) {
+          crm = { ...crm, owner_user_id: fallback.rows[0].id, owner_code: fallback.rows[0].code, owner_name: fallback.rows[0].name, owner_from_sale_code: true }
+        }
+      }
+    }
+
     res.json({
       customer: cusResult.rows[0],
       contactors: contactResult.rows,
       detail: detailResult.rows[0] || null,
       transport_labels: transportResult.rows,
-      crm: crmResult.rows[0] || null
+      crm,
     })
   } catch (err) {
     console.error(err)

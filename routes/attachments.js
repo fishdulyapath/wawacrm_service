@@ -30,7 +30,7 @@ router.get('/', async (req, res) => {
     const result = await crmDB.query(
       `SELECT a.*, u.name AS uploader_name
        FROM crm_activity_attachments a
-       JOIN crm_users u ON u.id = a.user_id
+       LEFT JOIN crm_users u ON u.id = a.user_id
        WHERE a.activity_id = $1
        ORDER BY a.created_at DESC`,
       [req.params.id]
@@ -49,10 +49,18 @@ router.post('/', upload.array('files', MAX_FILES), async (req, res) => {
 
   // ตรวจว่า activity มีอยู่และ user มีสิทธิ์
   try {
-    const act = await crmDB.query('SELECT id, owner_id FROM crm_activities WHERE id=$1', [req.params.id])
+    const act = await crmDB.query('SELECT id, created_by FROM crm_activities WHERE id=$1', [req.params.id])
     if (!act.rows.length) return res.status(404).json({ error: 'ไม่พบ Activity' })
-    if (req.user.role === 'sales_rep' && act.rows[0].owner_id !== req.user.id) {
-      return res.status(403).json({ error: 'ไม่มีสิทธิ์' })
+    // sales_rep ต้องเป็น owner (crm_activity_owners) หรือเป็นคนสร้าง
+    if (req.user.role === 'sales_rep') {
+      const ownerCheck = await crmDB.query(
+        'SELECT 1 FROM crm_activity_owners WHERE activity_id=$1 AND user_id=$2',
+        [req.params.id, req.user.id]
+      )
+      const isCreator = act.rows[0].created_by === req.user.id
+      if (!ownerCheck.rows.length && !isCreator) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์' })
+      }
     }
   } catch (err) {
     return res.status(500).json({ error: err.message })

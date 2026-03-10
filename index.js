@@ -23,6 +23,7 @@ app.use('/api/customers', require('./routes/customers'))     // Auth required
 app.use('/api/employees',      require('./routes/employees'))      // Auth required
 app.use('/api/activities',     require('./routes/activities'))     // Auth required
 app.use('/api/notifications',  require('./routes/notifications'))  // Auth required
+app.use('/api/reports',        require('./routes/reports'))         // Manager+ only
 app.use('/api/notes',          require('./routes/notes'))          // Auth required
 app.use('/api/activities/:id/attachments', require('./routes/attachments'))
 
