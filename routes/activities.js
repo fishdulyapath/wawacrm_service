@@ -113,8 +113,13 @@ router.get('/', async (req, res) => {
       )`)
       conditions.push(`EXISTS (SELECT 1 FROM crm_activity_owners ax WHERE ax.activity_id=a.id AND ax.removed_at IS NULL AND ax.status NOT IN ('done','cancelled'))`)
     } else if (status) {
-      // status กรองจาก derived status (เอา open/done/cancelled)
-      if (status === 'open') {
+      // กรองตาม my_status ของ user ที่ login (ถ้าเป็น sales_rep หรือส่ง owner_id มา)
+      // admin/manager ที่ไม่ได้กรอง owner → ใช้ derived status
+      const statusUser = filterUser || (req.user.role === 'sales_rep' && !isSA(req.user) ? req.user.id : null)
+      if (statusUser) {
+        params.push(statusUser); params.push(status)
+        conditions.push(`EXISTS (SELECT 1 FROM crm_activity_owners ax WHERE ax.activity_id=a.id AND ax.user_id=$${params.length-1} AND ax.removed_at IS NULL AND ax.status=$${params.length})`)
+      } else if (status === 'open') {
         conditions.push(`EXISTS (SELECT 1 FROM crm_activity_owners ax WHERE ax.activity_id=a.id AND ax.removed_at IS NULL AND ax.status='open')`)
       } else {
         params.push(status)

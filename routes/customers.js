@@ -140,6 +140,41 @@ router.get('/', async (req, res) => {
 })
 
 // ─────────────────────────────────────────────
+// GET /api/customers/provinces
+// GET /api/customers/ampers?province=xx
+// GET /api/customers/tambons?province=xx&amper=yy
+// ─────────────────────────────────────────────
+router.get('/provinces', async (req, res) => {
+  try {
+    const r = await posDB.query(`SELECT code, name_1 FROM erp_province ORDER BY name_1`)
+    res.json(r.rows)
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+router.get('/ampers', async (req, res) => {
+  try {
+    const { province } = req.query
+    if (!province) return res.json([])
+    const r = await posDB.query(
+      `SELECT code, name_1, province FROM erp_amper WHERE province=$1 ORDER BY name_1`, [province]
+    )
+    res.json(r.rows)
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+router.get('/tambons', async (req, res) => {
+  try {
+    const { province, amper } = req.query
+    if (!province || !amper) return res.json([])
+    const r = await posDB.query(
+      `SELECT code, name_1, amper, province FROM erp_tambon WHERE province=$1 AND amper=$2 ORDER BY name_1`,
+      [province, amper]
+    )
+    res.json(r.rows)
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+// ─────────────────────────────────────────────
 // GET /api/customers/:code  — ดูลูกค้าคนเดียว
 // ─────────────────────────────────────────────
 router.get('/:code', async (req, res) => {
