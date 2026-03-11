@@ -239,8 +239,20 @@ router.get('/:code', async (req, res) => {
       }
     }
 
+    // แปลง website "lat,lng" → latitude, longitude
+    const cus = { ...cusResult.rows[0] }
+    if (cus.website && /^-?\d+\.?\d*,-?\d+\.?\d*$/.test(cus.website.trim())) {
+      const [lat, lng] = cus.website.trim().split(',').map(Number)
+      cus.latitude  = lat
+      cus.longitude = lng
+      cus.website   = null
+    } else {
+      cus.latitude  = null
+      cus.longitude = null
+    }
+
     res.json({
-      customer: cusResult.rows[0],
+      customer: cus,
       contactors: contactResult.rows,
       detail: detailResult.rows[0] || null,
       transport_labels: transportResult.rows,
@@ -263,7 +275,8 @@ router.post('/', async (req, res) => {
     await crmClient.query('BEGIN')
 
     const {
-      code, name_1, country, address, province, amper, tambon, zip_code, website, remark,
+      code, name_1, country, address, province, amper, tambon, zip_code, remark,
+      latitude, longitude,
       sale_code,
       contactors = [],
       transport_labels = [],
@@ -274,11 +287,14 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'รหัสลูกค้าและชื่อลูกค้าต้องกรอก' })
     }
 
+    // เก็บพิกัดใน website column เป็น "lat,lng"
+    const geoWebsite = (latitude && longitude) ? `${latitude},${longitude}` : null
+
     // Insert ar_customer
     await posClient.query(`
-      INSERT INTO ar_customer (code, name_1, country, address, province, amper, tambon, zip_code, website, remark)
+      INSERT INTO ar_customer (code, name_1, country, address, province, amper, tambon, zip_code, remark, website)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-    `, [code, name_1, country, address, province, amper, tambon, zip_code, website, remark])
+    `, [code, name_1, country, address, province, amper, tambon, zip_code, remark, geoWebsite])
 
     // Insert ar_customer_detail (sale owner)
     if (sale_code) {
@@ -358,20 +374,24 @@ router.put('/:code', async (req, res) => {
     await crmClient.query('BEGIN')
 
     const {
-      name_1, country, address, province, amper, tambon, zip_code, website, remark,
+      name_1, country, address, province, amper, tambon, zip_code, remark,
+      latitude, longitude,
       sale_code,
       contactors = [],
       transport_labels = [],
       crm = {}
     } = req.body
 
+    // เก็บพิกัดใน website column เป็น "lat,lng"
+    const geoWebsite = (latitude && longitude) ? `${latitude},${longitude}` : null
+
     // Update ar_customer
     await posClient.query(`
       UPDATE ar_customer
       SET name_1=$1, country=$2, address=$3, province=$4, amper=$5,
-          tambon=$6, zip_code=$7, website=$8, remark=$9
+          tambon=$6, zip_code=$7, remark=$8, website=$9
       WHERE code=$10
-    `, [name_1, country, address, province, amper, tambon, zip_code, website, remark, code])
+    `, [name_1, country, address, province, amper, tambon, zip_code, remark, geoWebsite, code])
 
     // Upsert ar_customer_detail (sale_code)
     if (sale_code !== undefined) {
