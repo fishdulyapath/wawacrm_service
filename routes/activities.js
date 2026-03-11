@@ -61,10 +61,16 @@ router.get('/stats', async (req, res) => {
 
     const r = await crmDB.query(`
       SELECT
-        COUNT(*) FILTER (WHERE a.activity_type != 'meeting' AND a.due_date < CURRENT_DATE AND ${openSub}) AS overdue,
-        COUNT(*) FILTER (WHERE a.activity_type = 'task' AND DATE(a.due_date) = CURRENT_DATE AND ${openSub}) AS today,
+        COUNT(*) FILTER (WHERE (
+          (a.activity_type = 'task' AND a.due_date < CURRENT_DATE)
+          OR (a.activity_type IN ('call','meeting') AND a.start_datetime < NOW())
+        ) AND ${openSub}) AS overdue,
+        COUNT(*) FILTER (WHERE (
+          (a.activity_type = 'task' AND DATE(a.due_date) = CURRENT_DATE)
+          OR (a.activity_type IN ('call','meeting') AND DATE(a.start_datetime AT TIME ZONE 'Asia/Bangkok') = CURRENT_DATE AT TIME ZONE 'Asia/Bangkok')
+        ) AND ${openSub}) AS today,
         COUNT(*) FILTER (WHERE ${openSub}) AS open,
-        COUNT(*) FILTER (WHERE a.activity_type = 'meeting' AND DATE(a.start_datetime) = CURRENT_DATE AND ${openSub}) AS meetings_today
+        COUNT(*) FILTER (WHERE a.activity_type = 'meeting' AND DATE(a.start_datetime AT TIME ZONE 'Asia/Bangkok') = CURRENT_DATE AT TIME ZONE 'Asia/Bangkok' AND ${openSub}) AS meetings_today
       FROM crm_activities a
     `, params)
     res.json(r.rows[0])
@@ -98,20 +104,20 @@ router.get('/', async (req, res) => {
 
     if (due === 'overdue') {
       conditions.push(`(
-        (a.activity_type != 'meeting' AND a.due_date < CURRENT_DATE)
-        OR (a.activity_type = 'meeting' AND a.start_datetime < NOW())
+        (a.activity_type = 'task' AND a.due_date < CURRENT_DATE)
+        OR (a.activity_type IN ('call','meeting') AND a.start_datetime < NOW())
       )`)
       conditions.push(`EXISTS (SELECT 1 FROM crm_activity_owners ax WHERE ax.activity_id=a.id AND ax.removed_at IS NULL AND ax.status NOT IN ('done','cancelled'))`)
     } else if (due === 'today') {
       conditions.push(`(
-        (a.activity_type != 'meeting' AND DATE(a.due_date) = CURRENT_DATE)
-        OR (a.activity_type = 'meeting' AND DATE(a.start_datetime) = CURRENT_DATE)
+        (a.activity_type = 'task' AND DATE(a.due_date) = CURRENT_DATE)
+        OR (a.activity_type IN ('call','meeting') AND DATE(a.start_datetime AT TIME ZONE 'Asia/Bangkok') = (CURRENT_DATE AT TIME ZONE 'Asia/Bangkok'))
       )`)
       conditions.push(`EXISTS (SELECT 1 FROM crm_activity_owners ax WHERE ax.activity_id=a.id AND ax.removed_at IS NULL AND ax.status NOT IN ('done','cancelled'))`)
     } else if (due === 'week') {
       conditions.push(`(
-        (a.activity_type != 'meeting' AND a.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
-        OR (a.activity_type = 'meeting' AND DATE(a.start_datetime) BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
+        (a.activity_type = 'task' AND a.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
+        OR (a.activity_type IN ('call','meeting') AND DATE(a.start_datetime AT TIME ZONE 'Asia/Bangkok') BETWEEN (CURRENT_DATE AT TIME ZONE 'Asia/Bangkok') AND (CURRENT_DATE AT TIME ZONE 'Asia/Bangkok') + INTERVAL '7 days')
       )`)
       conditions.push(`EXISTS (SELECT 1 FROM crm_activity_owners ax WHERE ax.activity_id=a.id AND ax.removed_at IS NULL AND ax.status NOT IN ('done','cancelled'))`)
     } else if (status) {
@@ -825,11 +831,19 @@ router.patch('/:id/done', async (req, res) => {
       [req.params.id, outcome||null, call_phone||null, call_result||null, call_direction||null, duration_sec||null]
     )
 
-    // update per-user status เฉพาะ activity นี้
-    await crmDB.query(`
-      UPDATE crm_activity_owners SET status = 'done'
-      WHERE activity_id = $1 AND user_id = $2 AND removed_at IS NULL
-    `, [req.params.id, req.user.id])
+    // update status: meeting → ปิดทุก owner พร้อมกัน; call/task → เฉพาะ user นี้
+    const actRow = result.rows[0]
+    if (actRow.activity_type === 'meeting') {
+      await crmDB.query(
+        `UPDATE crm_activity_owners SET status = 'done' WHERE activity_id = $1 AND removed_at IS NULL`,
+        [req.params.id]
+      )
+    } else {
+      await crmDB.query(
+        `UPDATE crm_activity_owners SET status = 'done' WHERE activity_id = $1 AND user_id = $2 AND removed_at IS NULL`,
+        [req.params.id, req.user.id]
+      )
+    }
 
     res.json(result.rows[0])
   } catch (err) {
