@@ -7,8 +7,10 @@ const { notify, notifyMany } = require('../services/notifyService')
 
 router.use(authMiddleware)
 
-// ── Helper: isSuperAdmin ──────────────────────────────────────
-const isSA = u => u.code?.toUpperCase() === 'SUPERADMIN'
+// ── Helper: สิทธิ์สูงกว่า sales_rep ──────────────────────────
+const isSA       = u => u.code?.toUpperCase() === 'SUPERADMIN' || ['admin','manager','supervisor'].includes(u.role)
+const canCreate  = u => isSA(u)   // supervisor ขึ้นไป
+const canViewAll = u => ['admin','manager'].includes(u.role) || u.code?.toUpperCase() === 'SUPERADMIN'
 
 // ── Helper: ดึง owners ของ activity ──────────────────────────
 async function getOwners(activityId, client) {
@@ -50,7 +52,7 @@ function deriveActivityStatus(owners) {
 // ─────────────────────────────────────────────────────────────
 router.get('/stats', async (req, res) => {
   try {
-    const isMine = req.user.role === 'sales_rep' && !isSA(req.user)
+    const isMine = !canViewAll(req.user)
     const params = isMine ? [req.user.id] : []
     // openCond: นับเฉพาะ activity ที่ยังเปิดอยู่ (มี owner status=open)
     const openSub  = isMine
@@ -85,7 +87,7 @@ router.get('/', async (req, res) => {
     if (ar_code) { params.push(ar_code); conditions.push(`a.ar_code = $${params.length}`) }
 
     // filter by owner — ใช้ owners table
-    const filterUser = owner_id ? parseInt(owner_id) : (req.user.role === 'sales_rep' && !isSA(req.user) ? req.user.id : null)
+    const filterUser = owner_id ? parseInt(owner_id) : (!canViewAll(req.user) ? req.user.id : null)
     if (filterUser) {
       params.push(filterUser)
       conditions.push(`EXISTS (
@@ -115,7 +117,7 @@ router.get('/', async (req, res) => {
     } else if (status) {
       // กรองตาม my_status ของ user ที่ login (ถ้าเป็น sales_rep หรือส่ง owner_id มา)
       // admin/manager ที่ไม่ได้กรอง owner → ใช้ derived status
-      const statusUser = filterUser || (req.user.role === 'sales_rep' && !isSA(req.user) ? req.user.id : null)
+      const statusUser = filterUser || (!canViewAll(req.user) ? req.user.id : null)
       if (statusUser) {
         params.push(statusUser); params.push(status)
         conditions.push(`EXISTS (SELECT 1 FROM crm_activity_owners ax WHERE ax.activity_id=a.id AND ax.user_id=$${params.length-1} AND ax.removed_at IS NULL AND ax.status=$${params.length})`)
@@ -218,7 +220,7 @@ router.get('/:id', async (req, res) => {
     activity.removed_owners = owners.filter(o => o.removed_at)
 
     // ตรวจสิทธิ์ — sales_rep ต้องเป็น active owner
-    if (req.user.role === 'sales_rep' && !isSA(req.user)) {
+    if (!canViewAll(req.user)) {
       const ok = activity.owners.some(o => o.user_id === req.user.id)
       if (!ok) return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึง Activity นี้' })
     }
@@ -285,7 +287,7 @@ router.get('/:id', async (req, res) => {
 // body: { owners: [userId,...], ...fields }
 // ─────────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
-  if (req.user.role === 'sales_rep' && !isSA(req.user)) {
+  if (!canCreate(req.user)) {
     return res.status(403).json({ error: 'ไม่มีสิทธิ์สร้างกิจกรรม' })
   }
 
@@ -413,7 +415,7 @@ router.post('/', async (req, res) => {
 // PUT /api/activities/:id  — แก้ไข shared fields + manage owners
 // ─────────────────────────────────────────────────────────────
 router.put('/:id', async (req, res) => {
-  if (req.user.role === 'sales_rep' && !isSA(req.user)) {
+  if (!canCreate(req.user)) {
     return res.status(403).json({ error: 'ไม่มีสิทธิ์แก้ไขกิจกรรม' })
   }
 
@@ -732,7 +734,7 @@ router.patch('/:id/status', async (req, res) => {
 
     // ตรวจสิทธิ์ — ต้องเป็น active owner
     const ok = await isActiveOwner(req.params.id, req.user.id)
-    if (!ok && !isSA(req.user)) {
+    if (!ok && !canCreate(req.user)) {
       return res.status(403).json({ error: 'ไม่มีสิทธิ์' })
     }
 
@@ -756,7 +758,7 @@ router.patch('/:id/snooze', async (req, res) => {
     if (!existing.rows.length) return res.status(404).json({ error: 'ไม่พบ Activity' })
     const old = existing.rows[0]
 
-    if (!isSA(req.user)) {
+    if (!canCreate(req.user)) {
       const ok = await isActiveOwner(req.params.id, req.user.id)
       if (!ok) return res.status(403).json({ error: 'ไม่มีสิทธิ์' })
     }
@@ -803,7 +805,7 @@ router.patch('/:id/done', async (req, res) => {
     const existing = await crmDB.query('SELECT id FROM crm_activities WHERE id=$1', [req.params.id])
     if (!existing.rows.length) return res.status(404).json({ error: 'ไม่พบ Activity' })
 
-    if (!isSA(req.user)) {
+    if (!canCreate(req.user)) {
       const ok = await isActiveOwner(req.params.id, req.user.id)
       if (!ok) return res.status(403).json({ error: 'ไม่มีสิทธิ์' })
     }
