@@ -181,7 +181,7 @@ router.get('/', async (req, res) => {
     res.json({
       data: dataResult.rows.map(r => ({
         ...r,
-        status: r.derived_status || r.my_status || 'open',
+        status: r.my_status || r.derived_status || 'open',
         customer_name: customerMap[r.ar_code] || null,
       })),
       pagination: {
@@ -221,6 +221,16 @@ router.get('/:id', async (req, res) => {
     // derived status
     activity.derived_status = deriveActivityStatus(owners)
     activity.my_status = activity.owners.find(o => o.user_id === req.user.id)?.status || null
+
+    // ดึง customer_name จาก POS
+    if (activity.ar_code) {
+      try {
+        const cusRes = await posDB.query(
+          `SELECT name_1 FROM ar_customer WHERE code = $1`, [activity.ar_code]
+        )
+        activity.customer_name = cusRes.rows[0]?.name_1 || null
+      } catch {}
+    }
 
     // external invitees (ลูกค้า/contact)
     if (activity.activity_type === 'meeting') {
@@ -785,9 +795,8 @@ router.patch('/:id/snooze', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.patch('/:id/done', async (req, res) => {
   try {
-    const existing = await crmDB.query('SELECT * FROM crm_activities WHERE id=$1', [req.params.id])
+    const existing = await crmDB.query('SELECT id FROM crm_activities WHERE id=$1', [req.params.id])
     if (!existing.rows.length) return res.status(404).json({ error: 'ไม่พบ Activity' })
-    const old = existing.rows[0]
 
     if (!isSA(req.user)) {
       const ok = await isActiveOwner(req.params.id, req.user.id)
@@ -809,7 +818,7 @@ router.patch('/:id/done', async (req, res) => {
       [req.params.id, outcome||null, call_phone||null, call_result||null, call_direction||null, duration_sec||null]
     )
 
-    // update per-user status
+    // update per-user status เฉพาะ activity นี้
     await crmDB.query(`
       UPDATE crm_activity_owners SET status = 'done'
       WHERE activity_id = $1 AND user_id = $2 AND removed_at IS NULL
