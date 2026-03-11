@@ -816,19 +816,26 @@ router.patch('/:id/done', async (req, res) => {
       if (!ok) return res.status(403).json({ error: 'ไม่มีสิทธิ์' })
     }
 
-    const { outcome, call_phone, call_result, call_direction, duration_sec } = req.body
+    const { outcome, call_phone, call_result, call_direction, duration_sec,
+            cdr_uuid, cdr_recording_url, cdr_start_stamp, cdr_end_stamp } = req.body
 
     // update shared outcome/call fields บน activity row
     const result = await crmDB.query(`
       UPDATE crm_activities SET
-        outcome        = COALESCE($2, outcome),
-        call_phone     = COALESCE($3, call_phone),
-        call_result    = COALESCE($4, call_result),
-        call_direction = COALESCE($5, call_direction),
-        duration_sec   = COALESCE($6::int, duration_sec),
-        updated_at     = NOW()
+        outcome           = COALESCE($2, outcome),
+        call_phone        = COALESCE($3, call_phone),
+        call_result       = COALESCE($4, call_result),
+        call_direction    = COALESCE($5, call_direction),
+        duration_sec      = COALESCE($6::int, duration_sec),
+        cdr_uuid          = COALESCE($7, cdr_uuid),
+        cdr_recording_url = COALESCE($8, cdr_recording_url),
+        cdr_start_stamp   = COALESCE($9::timestamptz, cdr_start_stamp),
+        cdr_end_stamp     = COALESCE($10::timestamptz, cdr_end_stamp),
+        updated_at        = NOW()
       WHERE id=$1 RETURNING *`,
-      [req.params.id, outcome||null, call_phone||null, call_result||null, call_direction||null, duration_sec||null]
+      [req.params.id,
+       outcome||null, call_phone||null, call_result||null, call_direction||null, duration_sec||null,
+       cdr_uuid||null, cdr_recording_url||null, cdr_start_stamp||null, cdr_end_stamp||null]
     )
 
     // update status: meeting → ปิดทุก owner พร้อมกัน; call/task → เฉพาะ user นี้
