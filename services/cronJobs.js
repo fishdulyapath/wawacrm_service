@@ -42,24 +42,25 @@ function start() {
   cron.schedule('0 8 * * *', async () => {
     try {
       const result = await crmDB.query(`
-        SELECT a.id, a.subject, a.due_date, a.priority, a.ar_code,
+        SELECT a.id, a.subject, a.activity_type, a.due_date, a.start_datetime, a.priority, a.ar_code,
                u.id AS user_id, u.line_user_id, u.line_notify_enabled,
                ao.status AS owner_status
         FROM crm_activities a
         JOIN crm_activity_owners ao ON ao.activity_id = a.id AND ao.removed_at IS NULL
         JOIN crm_users u ON u.id = ao.user_id
-        WHERE a.activity_type = 'task'
-          AND ao.status NOT IN ('done','cancelled')
-          AND a.due_date < CURRENT_DATE
+        WHERE ao.status NOT IN ('done','cancelled')
+          AND COALESCE(a.due_date, DATE(a.start_datetime AT TIME ZONE 'Asia/Bangkok')) < CURRENT_DATE
           AND u.is_active = TRUE
       `)
 
       for (const task of result.rows) {
-        const daysDiff = Math.floor((Date.now() - new Date(task.due_date).getTime()) / 86400000)
+        const dueDate = task.due_date || task.start_datetime
+        const daysDiff = Math.floor((Date.now() - new Date(dueDate).getTime()) / 86400000)
+        const typeLabel = task.activity_type === 'call' ? 'งานโทร' : task.activity_type === 'meeting' ? 'นัดประชุม' : 'งาน'
         await notify({
           userId: task.user_id,
           notiType: 'task_overdue',
-          title: `งานเลยกำหนด ${daysDiff} วัน`,
+          title: `${typeLabel}เลยกำหนด ${daysDiff} วัน`,
           message: task.subject,
           refType: 'activity',
           refId: task.id,
@@ -87,22 +88,22 @@ function start() {
       const tomorrowDate = tomorrow.toISOString().split('T')[0]
 
       const result = await crmDB.query(`
-        SELECT a.id, a.subject, a.due_date, a.priority, a.ar_code,
+        SELECT a.id, a.subject, a.activity_type, a.due_date, a.start_datetime, a.priority, a.ar_code,
                u.id AS user_id, u.line_user_id, u.line_notify_enabled
         FROM crm_activities a
         JOIN crm_activity_owners ao ON ao.activity_id = a.id AND ao.removed_at IS NULL
         JOIN crm_users u ON u.id = ao.user_id
-        WHERE a.activity_type = 'task'
-          AND ao.status NOT IN ('done','cancelled')
-          AND a.due_date = $1
+        WHERE ao.status NOT IN ('done','cancelled')
+          AND COALESCE(a.due_date, DATE(a.start_datetime AT TIME ZONE 'Asia/Bangkok')) = $1
           AND u.is_active = TRUE
       `, [tomorrowDate])
 
       for (const task of result.rows) {
+        const typeLabel2 = task.activity_type === 'call' ? 'งานโทร' : task.activity_type === 'meeting' ? 'นัดประชุม' : 'งาน'
         await notify({
           userId: task.user_id,
           notiType: 'task_due',
-          title: `งานครบกำหนดพรุ่งนี้`,
+          title: `${typeLabel2}ครบกำหนดพรุ่งนี้`,
           message: task.subject,
           refType: 'activity',
           refId: task.id,

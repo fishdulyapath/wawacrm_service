@@ -282,6 +282,9 @@ router.get('/:id', async (req, res) => {
       }
     }
 
+    // override status ด้วย derived_status (crm_activities.status ไม่ได้ถูก update เมื่อปิดงาน)
+    activity.status = activity.my_status || activity.derived_status || 'open'
+
     res.json(activity)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -838,18 +841,26 @@ router.patch('/:id/done', async (req, res) => {
        cdr_uuid||null, cdr_recording_url||null, cdr_start_stamp||null, cdr_end_stamp||null]
     )
 
-    // update status: meeting → ปิดทุก owner พร้อมกัน; call/task → เฉพาะ user นี้
+    // update status: meeting หรือ admin/manager → ปิดทุก owner; call/task ของ sales_rep → เฉพาะ user นี้
     const actRow = result.rows[0]
-    if (actRow.activity_type === 'meeting') {
+    const closeAll = actRow.activity_type === 'meeting' || canCreate(req.user)
+    if (closeAll) {
       await crmDB.query(
         `UPDATE crm_activity_owners SET status = 'done' WHERE activity_id = $1 AND removed_at IS NULL`,
         [req.params.id]
       )
     } else {
-      await crmDB.query(
+      const updated = await crmDB.query(
         `UPDATE crm_activity_owners SET status = 'done' WHERE activity_id = $1 AND user_id = $2 AND removed_at IS NULL`,
         [req.params.id, req.user.id]
       )
+      // ถ้า user นี้ไม่มีใน owners (เช่น manager ปิดงาน) → ปิดทั้งหมด
+      if (updated.rowCount === 0) {
+        await crmDB.query(
+          `UPDATE crm_activity_owners SET status = 'done' WHERE activity_id = $1 AND removed_at IS NULL`,
+          [req.params.id]
+        )
+      }
     }
 
     res.json(result.rows[0])

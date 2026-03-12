@@ -85,7 +85,7 @@ async function sendDailySummary(user) {
             {
               type: 'box', layout: 'horizontal', spacing: 'sm', margin: 'sm',
               contents: [
-                _statBox('📌 งานค้าง', open_tasks, '#2563eb'),
+                _statBox('📌 กิจกรรมค้าง', open_tasks, '#2563eb'),
                 _statBox('⚠️ เลยกำหนด', overdue_tasks, overdue_tasks > 0 ? '#dc2626' : '#6b7280'),
                 _statBox('📅 นัดวันนี้', today_meetings, '#059669')
               ]
@@ -126,7 +126,7 @@ async function sendDailySummary(user) {
     }
   }
 
-  const messages = [{ type: 'flex', altText: `📋 สรุปงานวันนี้: งานค้าง ${open_tasks} | เลยกำหนด ${overdue_tasks} | นัด ${today_meetings}`, contents: flexBody }]
+  const messages = [{ type: 'flex', altText: `📋 สรุปงานวันนี้: กิจกรรมค้าง ${open_tasks} | เลยกำหนด ${overdue_tasks} | นัด ${today_meetings}`, contents: flexBody }]
 
   try {
     await sendMessage(line_user_id, messages)
@@ -191,13 +191,16 @@ function buildCustomerCard(customer, contactors = []) {
 // ✅ Task Reminder — แจ้งเตือน Task ใกล้ครบกำหนด
 // ─────────────────────────────────────────────────────────────
 async function sendTaskReminder(lineUserId, userId, activity) {
-  const dueText = activity.due_date
-    ? new Date(activity.due_date).toLocaleDateString('th-TH')
-    : 'ไม่ระบุ'
+  const dueDate = activity.due_date || activity.start_datetime
+  const dueText = dueDate ? new Date(dueDate).toLocaleDateString('th-TH', {
+    weekday: 'short', day: 'numeric', month: 'short',
+    ...(activity.start_datetime && !activity.due_date ? { hour: '2-digit', minute: '2-digit' } : {})
+  }) : 'ไม่ระบุ'
 
-  const isOverdue = activity.due_date && new Date(activity.due_date) < new Date()
+  const typeLabel = activity.activity_type === 'call' ? '📞 โทร' : activity.activity_type === 'meeting' ? '📅 นัดประชุม' : '✅ งาน'
+  const isOverdue = dueDate && new Date(dueDate) < new Date()
   const headerColor = isOverdue ? '#dc2626' : '#d97706'
-  const headerText  = isOverdue ? '⚠️ งานเลยกำหนดแล้ว!' : '🔔 แจ้งเตือนงานใกล้ครบกำหนด'
+  const headerText  = isOverdue ? `⚠️ ${typeLabel} เลยกำหนดแล้ว!` : `🔔 ${typeLabel} ใกล้ครบกำหนด`
 
   const flex = {
     type: 'bubble',
@@ -222,8 +225,8 @@ async function sendTaskReminder(lineUserId, userId, activity) {
         {
           type: 'button', style: 'primary', color: headerColor,
           action: {
-            type: 'uri', label: '✅ จัดการงานนี้',
-            uri: `${process.env.FRONTEND_URL}/line/tasks/${activity.id}`
+            type: 'uri', label: '📋 ดูรายละเอียด',
+            uri: `${process.env.FRONTEND_URL}/line/tasks`
           }
         }
       ]

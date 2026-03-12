@@ -17,21 +17,68 @@ router.get('/tasks', async (req, res) => {
     const result = await crmDB.query(`
       SELECT
         a.id, a.ar_code, a.activity_type, a.subject,
-        a.description, a.status, a.priority,
-        a.due_date, a.start_datetime, a.end_datetime, a.location
+        a.description, a.priority,
+        a.due_date, a.start_datetime, a.end_datetime, a.location,
+        a.call_direction, a.call_result, a.call_phone, a.duration_sec,
+        a.outcome, a.cdr_recording_url,
+        ao.status AS my_status,
+        (SELECT string_agg(u.name, ', ' ORDER BY u.name)
+         FROM crm_activity_owners o2
+         JOIN crm_users u ON u.id = o2.user_id
+         WHERE o2.activity_id = a.id AND o2.removed_at IS NULL) AS owners_names
       FROM crm_activities a
-      WHERE a.owner_id = $1
-        AND a.status NOT IN ('done','cancelled')
+      JOIN crm_activity_owners ao ON ao.activity_id = a.id AND ao.user_id = $1 AND ao.removed_at IS NULL
+      WHERE ao.status NOT IN ('done','cancelled')
       ORDER BY
         CASE WHEN a.due_date < CURRENT_DATE THEN 0 ELSE 1 END,
         CASE WHEN DATE(a.due_date) = CURRENT_DATE THEN 0 ELSE 1 END,
-        CASE WHEN a.activity_type = 'meeting' AND DATE(a.start_datetime) = CURRENT_DATE THEN 0 ELSE 1 END,
+        CASE WHEN a.activity_type = 'meeting' AND DATE(a.start_datetime AT TIME ZONE 'Asia/Bangkok') = (CURRENT_DATE AT TIME ZONE 'Asia/Bangkok') THEN 0 ELSE 1 END,
         a.due_date ASC NULLS LAST,
         a.start_datetime ASC NULLS LAST,
         CASE a.priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END
       LIMIT 100
     `, [userId])
-    res.json(result.rows)
+
+    const rows = result.rows
+
+    // ดึง customer_name จาก POS
+    const arCodes = [...new Set(rows.map(r => r.ar_code).filter(Boolean))]
+    let nameMap = {}
+    if (arCodes.length > 0) {
+      try {
+        const posResult = await posDB.query(
+          `SELECT code, name_1 FROM ar_customer WHERE code = ANY($1)`, [arCodes]
+        )
+        for (const r of posResult.rows) nameMap[r.code] = r.name_1
+      } catch {}
+    }
+
+    // ดึง contactors (ผู้ติดต่อ) จาก POS สำหรับ ar_code ของแต่ละงาน
+    let contactorMap = {}
+    if (arCodes.length > 0) {
+      try {
+        const cRes = await posDB.query(`
+          SELECT ar_code, name, telephone, work_title
+          FROM ar_contactor
+          WHERE ar_code = ANY($1)
+          ORDER BY ar_code, name
+        `, [arCodes])
+        for (const c of cRes.rows) {
+          if (!contactorMap[c.ar_code]) contactorMap[c.ar_code] = []
+          contactorMap[c.ar_code].push({
+            name: c.name,
+            work_title: c.work_title || null,
+            phones: (c.telephone || '').split(',').map(p => p.trim()).filter(Boolean)
+          })
+        }
+      } catch {}
+    }
+
+    res.json(rows.map(r => ({
+      ...r,
+      customer_name: nameMap[r.ar_code] || null,
+      contactors: contactorMap[r.ar_code] || []
+    })))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
